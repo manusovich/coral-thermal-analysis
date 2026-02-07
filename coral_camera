@@ -117,6 +117,8 @@ def main() -> int:
     tracks = []
     start_time = time.time()
     last_stat_time = start_time
+    last_cpu_pct = 0.0
+    last_temp_c = None
     last_emit_time = 0.0
     emit_interval = 1.0 / max(0.1, args.output_fps)
 
@@ -276,12 +278,26 @@ def main() -> int:
 
         if now - last_stat_time >= 2.0:
             last_stat_time = now
-            cpu_pct = (time.process_time() / max(1e-6, now - start_time)) * 100.0
-            temp_c = read_cpu_temp_c()
-            if temp_c is None:
-                print(f"CPU {cpu_pct:.1f}% TEMP NA", flush=True)
+            last_cpu_pct = (time.process_time() / max(1e-6, now - start_time)) * 100.0
+            last_temp_c = read_cpu_temp_c()
+            if last_temp_c is None:
+                print(f"CPU {last_cpu_pct:.1f}% TEMP NA", flush=True)
             else:
-                print(f"CPU {cpu_pct:.1f}% TEMP {temp_c:.1f}C", flush=True)
+                print(f"CPU {last_cpu_pct:.1f}% TEMP {last_temp_c:.1f}C", flush=True)
+
+        ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now))
+        temp_str = "NA" if last_temp_c is None else f"{last_temp_c:.1f}C"
+        overlay = f"{ts}  TEMP {temp_str}  CPU {last_cpu_pct:.1f}%"
+        cv2.putText(
+            frame,
+            overlay,
+            (6, 14),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.4,
+            (0, 0, 0),
+            1,
+            cv2.LINE_AA,
+        )
 
         if now - last_emit_time >= emit_interval:
             last_emit_time = now
