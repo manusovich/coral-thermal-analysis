@@ -125,7 +125,8 @@ def main() -> int:
             kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
             mask = cv2.dilate(mask, kernel, iterations=args.dilate)
 
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        contours_info = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        contours = contours_info[0] if len(contours_info) == 2 else contours_info[1]
         detections = []
         for c in contours:
             if cv2.contourArea(c) < args.min_area:
