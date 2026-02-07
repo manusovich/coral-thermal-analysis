@@ -84,6 +84,18 @@ def main() -> int:
 
     next_track_id = 1
     tracks = []
+    last_stat_time = time.time()
+
+    def read_cpu_temp_c() -> float | None:
+        for path in ("/sys/class/thermal/thermal_zone0/temp", "/sys/class/thermal/thermal_zone1/temp"):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    raw = f.read().strip()
+                if raw.isdigit():
+                    return int(raw) / 1000.0
+            except OSError:
+                continue
+        return None
 
     start_time = time.time()
 
@@ -225,6 +237,25 @@ def main() -> int:
         for tr in tracks:
             x1, y1, x2, y2 = tr["bbox"]
             cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 0), 1)
+            cv2.putText(
+                frame,
+                f"ID {tr['id']}",
+                (x1, max(15, y1 - 5)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (0, 0, 0),
+                1,
+                cv2.LINE_AA,
+            )
+
+        if now - last_stat_time >= 2.0:
+            last_stat_time = now
+            cpu_pct = (time.process_time() / max(1e-6, now - start_time)) * 100.0
+            temp_c = read_cpu_temp_c()
+            if temp_c is None:
+                print(f"CPU {cpu_pct:.1f}% TEMP NA", flush=True)
+            else:
+                print(f"CPU {cpu_pct:.1f}% TEMP {temp_c:.1f}C", flush=True)
 
         if not args.no_display:
             display_frame = frame
