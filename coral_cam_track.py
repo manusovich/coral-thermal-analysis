@@ -8,7 +8,6 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from tflite_runtime.interpreter import Interpreter, load_delegate
 
 
 def load_labels(path: Path) -> dict[int, str]:
@@ -65,14 +64,6 @@ def main() -> int:
     parser.add_argument("--max-age", type=int, default=30)
     parser.add_argument("--reid-seconds", type=float, default=3.0)
     parser.add_argument("--inertia", type=float, default=0.7)
-    parser.add_argument(
-        "--model",
-        type=Path,
-        default=Path("models/mobilenet_ssd_v2_coco_quant_postprocess_edgetpu.tflite"),
-    )
-    parser.add_argument("--labels", type=Path, default=Path("models/coco_labels.txt"))
-    parser.add_argument("--classify-after-seconds", type=float, default=3.0)
-    parser.add_argument("--classify-interval", type=float, default=1.0)
     parser.add_argument("--max-seconds", type=float, default=0.0)
     args = parser.parse_args()
 
@@ -88,22 +79,6 @@ def main() -> int:
         varThreshold=args.var_threshold,
         detectShadows=args.detect_shadows,
     )
-
-    if not args.model.exists():
-        raise SystemExit(f"Model not found: {args.model}")
-    if not args.labels.exists():
-        raise SystemExit(f"Labels not found: {args.labels}")
-
-    labels = load_labels(args.labels)
-    allowed_labels = {"person", "car"}
-
-    interpreter = Interpreter(
-        model_path=str(args.model),
-        experimental_delegates=[load_delegate("libedgetpu.so.1")],
-    )
-    interpreter.allocate_tensors()
-    input_details = interpreter.get_input_details()[0]
-    output_details = interpreter.get_output_details()
 
     wait_ms = max(1, int(1000 / max(1, args.fps))) if not args.no_display else 1
 
@@ -139,22 +114,13 @@ def main() -> int:
             y2 = min(frame_h - 1, y + h + pad)
             detections.append((x1, y1, x2, y2))
 
-        # Merge overlapping detections.
-        merged = []
-        for box in detections:
-            merged_into = False
-            for i, m in enumerate(merged):
-                if args.merge_iou > 0 and iou(box, m) >= args.merge_iou:
-                    x1 = min(box[0], m[0])
-                    y1 = min(box[1], m[1])
-                    x2 = max(box[2], m[2])
-                    y2 = max(box[3], m[3])
-                    merged[i] = (x1, y1, x2, y2)
-                    merged_into = True
-                    break
-            if not merged_into:
-                merged.append(box)
-        detections = merged
+        # Merge all detections into one block (union).
+        if detections:
+            x1 = min(b[0] for b in detections)
+            y1 = min(b[1] for b in detections)
+            x2 = max(b[2] for b in detections)
+            y2 = max(b[3] for b in detections)
+            detections = [(x1, y1, x2, y2)]
 
         now = time.time()
         matched_ids = set()
@@ -257,67 +223,8 @@ def main() -> int:
         tracks = filtered
 
         for tr in tracks:
-            if (
-                (now - tr["first_seen"]) >= args.classify_after_seconds
-                and (now - tr["last_classified"]) >= args.classify_interval
-            ):
-                x1, y1, x2, y2 = tr["bbox"]
-                crop = frame[y1:y2, x1:x2]
-                if crop.size != 0:
-                    crop_rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
-                    ih, iw = input_details["shape"][1:3]
-                    resized = cv2.resize(crop_rgb, (iw, ih))
-                    if input_details["dtype"] == np.float32:
-                        input_tensor = resized.astype(np.float32)
-                    else:
-                        input_tensor = resized.astype(input_details["dtype"])
-                    input_tensor = np.expand_dims(input_tensor, axis=0)
-                    interpreter.set_tensor(input_details["index"], input_tensor)
-                    interpreter.invoke()
-                    class_ids = interpreter.get_tensor(output_details[1]["index"])[0]
-                    scores = interpreter.get_tensor(output_details[2]["index"])[0]
-                    num = int(interpreter.get_tensor(output_details[3]["index"])[0])
-                    best = None
-                    for i in range(num):
-                        score = float(scores[i])
-                        cls_id = int(class_ids[i])
-                        label = labels.get(cls_id, str(cls_id))
-                        if label not in allowed_labels:
-                            continue
-                        if best is None or score > best[1]:
-                            best = (label, score)
-                    if best is not None:
-                        label, score = best
-                        if tr["score"] is None or score > tr["score"]:
-                            tr["label"] = label
-                            tr["score"] = score
-                    tr["last_classified"] = now
-
-            if tr.get("label") in allowed_labels and tr.get("score") is not None:
-                x1, y1, _, _ = tr["bbox"]
-                text = f"ID {tr['id']} {tr['label']} {tr['score']:.2f}"
-                font = cv2.FONT_HERSHEY_SIMPLEX
-                scale = 0.5
-                thickness = 1
-                (tw, th), baseline = cv2.getTextSize(text, font, scale, thickness)
-                tx = max(0, x1)
-                ty = max(th + baseline + 2, y1 - 5)
-                x2 = min(frame_w - 1, tx + tw + 4)
-                y1_box = max(0, ty - th - baseline - 2)
-                y2_box = min(frame_h - 1, ty + baseline + 2)
-                roi = frame[y1_box:y2_box, tx:x2]
-                if roi.size != 0:
-                    frame[y1_box:y2_box, tx:x2] = 255 - roi
-                cv2.putText(
-                    frame,
-                    text,
-                    (tx + 2, ty),
-                    font,
-                    scale,
-                    (0, 0, 0),
-                    thickness,
-                    cv2.LINE_AA,
-                )
+            x1, y1, x2, y2 = tr["bbox"]
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 0), 1)
 
         if not args.no_display:
             display_frame = frame
