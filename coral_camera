@@ -115,7 +115,8 @@ def main() -> int:
 
     next_track_id = 1
     tracks = []
-    last_stat_time = time.time()
+    start_time = time.time()
+    last_stat_time = start_time
     last_emit_time = 0.0
     emit_interval = 1.0 / max(0.1, args.output_fps)
 
